@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -104,6 +105,12 @@ jobs:
           - os: depot-macos-14
             target: aarch64-apple-darwin
             code-target: darwin-arm64
+          - os: depot-ubuntu-22.04
+            target: aarch64-linux-android
+            code-target: android-arm64
+          - os: depot-ubuntu-22.04
+            target: armv7-linux-androideabi
+            code-target: android-armv7
 
     name: Package ${{ matrix.code-target }}
     runs-on: ${{ matrix.os }}
@@ -119,6 +126,29 @@ jobs:
 
       - name: Install Rust toolchain
         run: rustup target add ${{ matrix.target }}
+
+      - name: Set up Android NDK and configure Cargo
+        if: matrix.code-target == 'android-arm64' || matrix.code-target == 'android-armv7'
+        env:
+          NDK_VERSION: "r26b"
+          MIN_SDK_VERSION: "21"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+          wget https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip
+          unzip android-ndk-${NDK_VERSION}-linux.zip
+          echo "ANDROID_NDK_HOME=$PWD/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
+          echo "$PWD/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          mkdir -p ~/.cargo
+          cat > .cargo/config.toml << EOF
+          [target.${matrix.target}]
+          linker = "aarch64-linux-android${MIN_SDK_VERSION}-clang"
+          ar = "llvm-ar"
+          [target.${matrix.target}]
+          linker = "armv7a-linux-androideabi${MIN_SDK_VERSION}-clang"
+          ar = "llvm-ar"
+          EOF
+          echo "NDK_VERSION=${NDK_VERSION} >> $GITHUB_ENV
 
       - name: Install arm64 toolchain
         if: matrix.code-target == 'linux-arm64' || matrix.code-target == 'linux-arm64-musl'
@@ -147,6 +177,8 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${{ env.MIN_SDK_VERSION }}-clang || ""
+          CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi${{ env.MIN_SDK_VERSION }}-clang || ""
           # Strip all debug symbols from the resulting binaries
           RUSTFLAGS: "-C strip=symbols -C codegen-units=1"
           # Inline the version of the npm package in the CLI binary
